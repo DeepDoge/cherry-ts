@@ -10,17 +10,14 @@
 */
 
 import { browser } from "./environment"
+import { instanceOf, isArray } from "./internal/short"
+import { isSignalLike } from "./signal"
 import type { Template } from "./template"
 
 let NULL: null = null
 let doc = browser ? document : NULL
-let isFunction = (value: any): value is Function => typeof value === "function"
-let isArray = (value: unknown): value is unknown[] => Array.isArray(value)
 let weakMap = <K extends object, V>() => new WeakMap<K, V>()
-let instanceOf = <T extends (abstract new (...args: any) => any)[]>(
-    value: unknown,
-    ...types: T
-): value is InstanceType<T[number]> => types.some((type) => value instanceof type)
+
 let weakSet = WeakSet
 let startsWith = <const T extends string>(
     text: string,
@@ -121,162 +118,6 @@ if (doc) {
     }
 }
 
-export type SignalOrValue<T> = T | Signal<T>
-export type SignalOrValueOrFn<T> = SignalOrValue<T> | ((...args: unknown[]) => T)
-export type SignalOrFn<T> = Signal<T> | ((...args: unknown[]) => T)
-export interface Signal<T> {
-    readonly ref: T
-    follow(follower: Signal.Follower<T>, options?: Signal.Follow.Options): Signal.Follow
-    follow$<T extends Lifecycle.Connectable>(
-        node: T,
-        ...args: Parameters<this["follow"]>
-    ): void
-    ping(): void
-}
-export namespace Signal {
-    export interface Mut<T> extends Signal<T> {
-        ref: T
-        asImmutable(): Signal<T>
-    }
-
-    export type Builder = <T>(initial: T, updater?: Updater<T>) => Signal.Mut<T>
-    export type Updater<T> = (set: (value: T) => void) => (() => void) | void
-
-    export type Follow = { unfollow: Unfollow }
-    export type Unfollow = () => void
-    export namespace Follow {
-        export type Options = {
-            mode?:
-                | typeof FOLLOW_MODE_ONCE
-                | typeof FOLLOW_MODE_NORMAL
-                | typeof FOLLOW_MODE_IMMEDIATE
-        }
-    }
-    export type Follower<T> = (value: T) => void
-}
-
-let FOLLOW = "follow" as const
-let FOLLOW$ = (FOLLOW + "$") as `${typeof FOLLOW}$`
-let UNFOLLOW = ("un" + FOLLOW) as `un${typeof FOLLOW}`
-let FOLLOW_MODE_ONCE = "once" as const
-let FOLLOW_MODE_NORMAL = "normal" as const
-let FOLLOW_MODE_IMMEDIATE = "immediate" as const
-
-let FOLLOW_IMMEDIATE_OPTION = {
-    mode: FOLLOW_MODE_IMMEDIATE,
-} as const satisfies Signal.Follow.Options
-
-let signals = new weakSet<Signal<unknown>>()
-
-export let isSignal = (value: any): value is Signal<unknown> => signals.has(value)
-
-export let isSignalOrFn = <T>(value: any): value is SignalOrFn<T> =>
-    isSignal(value) || isFunction(value)
-
-export let signalFrom = <T>(src: SignalOrFn<T>): Signal<T> =>
-    isFunction(src) ? derive(src) : src
-
-export let signal: Signal.Builder = (currentValue, updater) => {
-    type T = typeof currentValue
-
-    let followers = new Set<Signal.Follower<T>>()
-
-    let ping: Signal<T>["ping"] = () =>
-        followers[FOR_EACH]((follower) => follower(currentValue))
-    let set = (value: T) => value !== currentValue && ((currentValue = value), ping())
-
-    let cleanup: (() => void) | void
-    let passive = () => cleanup && (cleanup(), (cleanup = void 0))
-    let active = () => updater && !cleanup && (cleanup = updater(set))
-
-    let self: Signal.Mut<T> = {
-        set ref(value) {
-            set(value)
-        },
-        get ref() {
-            active(), timeout(() => followers.size || passive(), 5000)
-            usedSignalsTail?.add(self)
-            return currentValue
-        },
-        ping,
-        [FOLLOW]: (follower, options = {}) => (
-            active(),
-            options.mode === FOLLOW_MODE_IMMEDIATE && follower(currentValue),
-            followers.add(follower),
-            {
-                [UNFOLLOW]() {
-                    followers.delete(follower), followers.size || passive()
-                },
-            }
-        ),
-        [FOLLOW$]: (node, ...args) =>
-            onConnected$(node, () => self[FOLLOW](...args)[UNFOLLOW]),
-        asImmutable: () => self,
-    }
-    signals.add(self)
-    return self
-}
-
-let usedSignalsTail: Set<Signal<unknown>> | undefined
-let callAndCaptureUsedSignals = <T, TArgs extends unknown[]>(
-    fn: (...args: TArgs) => T,
-    usedSignals?: Set<Signal<unknown>>,
-    ...args: TArgs
-): T => {
-    let userSignalsBefore = usedSignalsTail
-    usedSignalsTail = usedSignals
-    try {
-        return fn(...args)
-    } catch (error) {
-        throw error
-    } finally {
-        usedSignalsTail = userSignalsBefore
-    }
-}
-
-let deriveCache = weakMap<Function, Signal.Mut<unknown>>()
-export let derive = <T>(
-    fn: () => T,
-    staticDependencies?: readonly Signal<unknown>[],
-): Signal<T> => {
-    let value = deriveCache.get(fn) as Signal.Mut<T> | undefined
-    return staticDependencies
-        ? signal<T>(fn(), (set) => {
-              let follows = staticDependencies.map((dependency) =>
-                  dependency.follow(() => set(fn())),
-              )
-              return () => follows.forEach((follow) => follow.unfollow())
-          })
-        : value ||
-              (deriveCache.set(
-                  fn,
-                  (value = signal<T>(undefined!, (set) => {
-                      let toUnfollow: Set<Signal<unknown>> | undefined
-                      let follows = weakMap<Signal<unknown>, Signal.Follow>()
-                      let unfollow = () =>
-                          toUnfollow?.[FOR_EACH]((signal) =>
-                              follows.get(signal)!.unfollow(),
-                          )
-                      let update = () => {
-                          let toFollow = new Set<Signal<unknown>>()
-                          set(callAndCaptureUsedSignals(fn, toFollow))
-                          toFollow[FOR_EACH]((signal) => {
-                              !follows.has(signal) &&
-                                  follows.set(signal, signal.follow(update))
-                              toUnfollow?.delete(signal)
-                          })
-                          unfollow()
-                          toUnfollow = toFollow
-                      }
-
-                      update()
-
-                      return unfollow
-                  })),
-              ),
-              value)
-}
-
 let bindSignalAsFragment = <T>(signalOrFn: SignalOrFn<T>): DocumentFragment => {
     let start = createComment(EMPTY_STRING)
     let end = createComment(EMPTY_STRING)
@@ -356,7 +197,7 @@ let toNode = (value: unknown): CharacterData | Element | DocumentFragment => {
           ? fragment(...value.map(toNode))
           : instanceOf(value, Element, DocumentFragment, CharacterData)
             ? value
-            : isSignalOrFn(value)
+            : isSignalLike(value)
               ? bindSignalAsFragment(value)
               : doc!.createTextNode(value + EMPTY_STRING)
 }
@@ -370,93 +211,3 @@ export let fragment = <
     result.append(...children.map(toNode))
     return result
 }
-
-export type Tags = {
-    [K in keyof HTMLElementTagNameMap]: Template.Builder<HTMLElementTagNameMap[K]>
-} & {
-    [unknownTag: string]: Template.Builder<HTMLElement>
-}
-export let tags = new Proxy(
-    {},
-    {
-        get:
-            (_, tagName: string) =>
-            (...args: Parameters<Template.Builder<HTMLElement>>) =>
-                populate(doc!.createElement(tagName), ...args),
-    },
-) as Tags
-
-let bindOrSet = <T>(
-    node: Element | CharacterData,
-    value: SignalOrValueOrFn<T>,
-    then: (value: T) => void,
-): void =>
-    isSignalOrFn(value)
-        ? signalFrom(value)[FOLLOW$](node, then, FOLLOW_IMMEDIATE_OPTION)
-        : then(value)
-
-let bindSignalAsValue = <
-    T extends HTMLElement & { type?: string | null; value: string | null },
-    TKey extends Extract<keyof T, Template.ValueKey<T["type"]>>,
->(
-    element: T,
-    key: TKey,
-    signal: Signal.Mut<T[TKey]>,
-) => (
-    element.addEventListener(
-        "input",
-        (event: Event) => (signal.ref = (event.target as T)[key]),
-    ), // All new browsers will remove the listeners automatically. So no need to waste code removing it manually here.
-    signal[FOLLOW$](element, (value) => (element[key] = value), FOLLOW_IMMEDIATE_OPTION)
-)
-
-export let populate: {
-    <T extends ParentNode>(node: T, ...args: Parameters<Template.Builder<T>>): T
-} = (...args: any) =>
-    isArray(args[1])
-        ? (populate_Node as any)(...args)
-        : (populate_Element as any)(...args)
-let populate_Node = <T extends ParentNode>(
-    node: T,
-    children?: Template.MemberOf<T>[],
-) => (children && node.appendChild(toNode(children)), node)
-let populate_Element = <T extends Element & Partial<ElementCSSInlineStyle>>(
-    element: T,
-    props?: Template.Props<T>,
-    children?: Template.MemberOf<T>[],
-) => (
-    props &&
-        Object.keys(props)[FOR_EACH]((key) =>
-            startsWith(key, "bind:")
-                ? bindSignalAsValue(
-                      element as never,
-                      key.slice(4) as never,
-                      props[key as never] as never,
-                  )
-                : startsWith(key, "style:")
-                  ? bindOrSet(
-                        element,
-                        props[key as never]!,
-                        (value) =>
-                            element.style?.setProperty(
-                                key.slice(6),
-                                value === NULL ? value : value + EMPTY_STRING,
-                            ),
-                    )
-                  : startsWith(key, "class:")
-                    ? bindOrSet(element, props[key], (value) =>
-                          element.classList.toggle(key.slice(6), !!value),
-                      )
-                    : startsWith(key, "on:")
-                      ? element.addEventListener(
-                            key.slice(3),
-                            props[key] as EventListener,
-                        )
-                      : bindOrSet(element, props[key as never], (value) =>
-                            value === NULL
-                                ? element.removeAttribute(key)
-                                : element.setAttribute(key, value + EMPTY_STRING),
-                        ),
-        ),
-    populate_Node(element, children)
-)

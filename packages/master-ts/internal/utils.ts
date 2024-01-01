@@ -1,30 +1,5 @@
+/** @deprecated */
 export namespace Utils {
-    export type AsciiLetter =
-        | "a"
-        | "b"
-        | "c"
-        | "d"
-        | "e"
-        | "f"
-        | "g"
-        | "h"
-        | "i"
-        | "j"
-        | "l"
-        | "m"
-        | "n"
-        | "o"
-        | "p"
-        | "q"
-        | "r"
-        | "s"
-        | "u"
-        | "v"
-        | "w"
-        | "x"
-        | "y"
-        | "z"
-
     export type KebabCase<
         T extends string,
         A extends string = "",

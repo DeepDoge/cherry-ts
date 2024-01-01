@@ -1,6 +1,5 @@
-import type { Signal, SignalOrFn } from "./core"
-import { signal, signalFrom } from "./core"
-import type { Utils } from "./utils"
+import { Signal } from "."
+import type { Utils } from "../internal/utils"
 
 export const TYPEOF = Symbol()
 export type TYPEOF = typeof TYPEOF
@@ -137,7 +136,7 @@ namespace MatchBuilder {
 }
 
 export let match: {
-    <TValue>(valueSignalOrFn: SignalOrFn<TValue>): MatchBuilder<TValue>
+    <TValue>(valueSignalOrFn: SignalLike<TValue>): MatchBuilder<TValue>
 } = <TValue>(
     valueSignalOrFn: SignalOrFn<TValue>,
     cases: {

@@ -1,5 +1,5 @@
-import type { Signal, SignalOrFn } from "./core"
-import { signal, signalFrom } from "./core"
+import type { Signal, SignalOrFn } from "../core"
+import { signal, signalFrom } from "../core"
 
 export let each = <T>(arr: SignalOrFn<T[]>) => ({
     key: (getKey: (value: T, index: number) => unknown) => ({

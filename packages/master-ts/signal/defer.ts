@@ -1,5 +1,5 @@
-import type { Signal, SignalOrFn } from "./core"
-import { signal, signalFrom } from "./core"
+import type { Signal, SignalOrFn } from "../core"
+import { signal, signalFrom } from "../core"
 
 export let defer = <T>(signalOrFunction: SignalOrFn<T>, timeout_ms = 250): Signal<T> => {
     let sourceSignal = signalFrom(signalOrFunction)

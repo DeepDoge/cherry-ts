@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { signal } from "./core"
+import { signal } from "../core"
 import { each } from "./each"
 
 const describe = () => {
